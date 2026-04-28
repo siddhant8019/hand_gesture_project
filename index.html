@@ -1,0 +1,1685 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Hand Gesture Project</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background-color: #000;
+        font-family: "Courier New", sans-serif;
+      }
+
+      #ui {
+        position: absolute;
+        top: 10%;
+        width: 100%;
+        text-align: center;
+        color: #fff;
+        pointer-events: none;
+        z-index: 10;
+      }
+
+      h1 {
+        font-size: 3rem;
+        margin: 0;
+        letter-spacing: 10px;
+        font-weight: 900;
+        text-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+        background: linear-gradient(to bottom, #fff, #888);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      #technique-name {
+        font-size: 1.2rem;
+        color: #00ffff;
+        margin-top: 15px;
+        font-weight: bold;
+        letter-spacing: 4px;
+        text-transform: uppercase;
+        text-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+      }
+
+      /* Large Centered Camera Hub - Taller for Reel Context */
+      #video-container {
+        position: absolute;
+        bottom: 2%;
+        left: 7%;
+        transform: translateX(-50%) scaleX(-1);
+        width: 55vw;
+        max-width: 12vw;
+        height: 12vh;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        z-index: 20;
+        background-color: #000;
+        border-radius: 25px;
+        overflow: hidden;
+        box-shadow: 0 0 40px rgba(0, 0, 0, 0.9);
+      }
+
+      video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.8;
+      }
+      #output_canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      #grain {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 5;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.08'/%3E%3C/svg%3E");
+      }
+    </style>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"
+      crossorigin="anonymous"
+    ></script>
+  </head>
+  <body>
+    <div id="grain"></div>
+
+    <div id="ui">
+      <h1>FATE</h1>
+      <div id="technique-name">CURSED ENERGY</div>
+    </div>
+
+    <div id="video-container">
+      <video class="input_video"></video>
+      <canvas id="output_canvas"></canvas>
+    </div>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+      import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+      import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+
+      // --- Scene & Rendering ---
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000,
+      );
+      camera.position.z = 55;
+
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true,
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      document.body.appendChild(renderer.domElement);
+
+      const composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5,
+        0.4,
+        0.85,
+      );
+      composer.addPass(bloomPass);
+
+      const COUNT = 20000;
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(COUNT * 3);
+      const colors = new Float32Array(COUNT * 3);
+      const sizes = new Float32Array(COUNT);
+
+      const targetPositions = new Float32Array(COUNT * 3);
+      const targetColors = new Float32Array(COUNT * 3);
+      const targetSizes = new Float32Array(COUNT);
+
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(positions, 3),
+      );
+      geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+
+      const particles = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          size: 0.3,
+          vertexColors: true,
+          blending: THREE.AdditiveBlending,
+          transparent: true,
+          depthWrite: false,
+        }),
+      );
+      scene.add(particles);
+
+      // ==========================================
+      //  SINGLE-HAND Technique Particle Functions
+      // ==========================================
+
+      function getRed(i) {
+        if (i < COUNT * 0.1) {
+          const r = Math.random() * 9;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3,
+            g: 0.1,
+            b: 0.1,
+            s: 2.5,
+          };
+        } else {
+          const armCount = 3;
+          const t = i / COUNT;
+          const angle = t * 15 + (i % armCount) * ((Math.PI * 2) / armCount);
+          const radius = 2 + t * 40;
+          return {
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle),
+            z: (Math.random() - 0.5) * (10 * t),
+            r: 0.8,
+            g: 0,
+            b: 0,
+            s: 1.0,
+          };
+        }
+      }
+
+      function getVoid(i) {
+        if (i < COUNT * 0.15) {
+          const angle = Math.random() * Math.PI * 2;
+          return {
+            x: 26 * Math.cos(angle),
+            y: 26 * Math.sin(angle),
+            z: (Math.random() - 0.5) * 1,
+            r: 1,
+            g: 1,
+            b: 1,
+            s: 2.5,
+          };
+        } else {
+          const radius = 30 + Math.random() * 90;
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: radius * Math.sin(phi) * Math.cos(theta),
+            y: radius * Math.sin(phi) * Math.sin(theta),
+            z: radius * Math.cos(phi),
+            r: 0.1,
+            g: 0.6,
+            b: 1.0,
+            s: 0.7,
+          };
+        }
+      }
+
+      function getPurple(i) {
+        if (Math.random() > 0.8)
+          return {
+            x: (Math.random() - 0.5) * 100,
+            y: (Math.random() - 0.5) * 100,
+            z: (Math.random() - 0.5) * 100,
+            r: 0.5,
+            g: 0.5,
+            b: 0.7,
+            s: 0.8,
+          };
+        const r = 20;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        return {
+          x: r * Math.sin(phi) * Math.cos(theta),
+          y: r * Math.sin(phi) * Math.sin(theta),
+          z: r * Math.cos(phi),
+          r: 0.6,
+          g: 0.5,
+          b: 1.0,
+          s: 2.5,
+        };
+      }
+
+      function getShrine(i) {
+        const total = COUNT;
+        if (i < total * 0.3)
+          return {
+            x: (Math.random() - 0.5) * 80,
+            y: -15,
+            z: (Math.random() - 0.5) * 80,
+            r: 0.4,
+            g: 0,
+            b: 0,
+            s: 0.8,
+          };
+        else if (i < total * 0.4) {
+          const px = (i % 4 < 2 ? 1 : -1) * 12;
+          const pz = ((i % 4) % 2 == 0 ? 1 : -1) * 8;
+          return {
+            x: px + (Math.random() - 0.5) * 2,
+            y: -15 + Math.random() * 30,
+            z: pz + (Math.random() - 0.5) * 2,
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
+            s: 0.6,
+          };
+        } else if (i < total * 0.6) {
+          const t = Math.random() * Math.PI * 2;
+          const rad = Math.random() * 30;
+          const curve = Math.pow(rad / 30, 2) * 10;
+          return {
+            x: rad * Math.cos(t),
+            y: 15 - curve + Math.random() * 2,
+            z: rad * Math.sin(t) * 0.6,
+            r: 0.6,
+            g: 0,
+            b: 0,
+            s: 0.6,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      function getFist(i) {
+        if (i < COUNT * 0.08) {
+          const r = Math.random() * 3;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.8,
+            g: 0.0,
+            b: 1.5,
+            s: 3.0,
+          };
+        } else if (i < COUNT * 0.5) {
+          const t = i / COUNT;
+          const armCount = 5;
+          const arm = i % armCount;
+          const angle = t * 25 + (arm * Math.PI * 2) / armCount;
+          const radius = Math.max(40 * (1 - t * 1.5), 2);
+          return {
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle),
+            z: (Math.random() - 0.5) * (8 * (1 - t)),
+            r: 0.15 + t * 0.3,
+            g: 0.0,
+            b: 0.3 + t * 0.5,
+            s: 1.8 * (1 - t * 0.5),
+          };
+        } else if (i < COUNT * 0.7) {
+          const r = 25 + Math.random() * 30;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.05,
+            g: 0.0,
+            b: 0.1,
+            s: 0.5,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      function getOpenPalm(i) {
+        if (i < COUNT * 0.1) {
+          const r = Math.random() * 5;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3.0,
+            g: 2.5,
+            b: 1.5,
+            s: 2.8,
+          };
+        } else if (i < COUNT * 0.7) {
+          const ringCount = 5;
+          const ringIndex = Math.floor(Math.random() * ringCount);
+          const radius = 8 + ringIndex * 9;
+          const angle = Math.random() * Math.PI * 2;
+          return {
+            x: radius * Math.cos(angle) + (Math.random() - 0.5) * 1.5,
+            y: radius * Math.sin(angle) + (Math.random() - 0.5) * 1.5,
+            z: (Math.random() - 0.5) * (2 + ringIndex * 0.5),
+            r: 2.0 - ringIndex * 0.3,
+            g: 1.5 - ringIndex * 0.2,
+            b: 0.6 - ringIndex * 0.08,
+            s: 2.2 - ringIndex * 0.25,
+          };
+        } else {
+          const r = 45 + Math.random() * 20;
+          const theta = Math.random() * 6.28;
+          return {
+            x: r * Math.cos(theta),
+            y: r * Math.sin(theta),
+            z: (Math.random() - 0.5) * 5,
+            r: 0.4,
+            g: 0.3,
+            b: 0.1,
+            s: 0.4,
+          };
+        }
+      }
+
+      function getOk(i) {
+        if (i < COUNT * 0.4) {
+          const u = Math.random() * Math.PI * 2;
+          const v = Math.random() * Math.PI * 2;
+          const R = 18;
+          const r = 2.5 + Math.random() * 1.5;
+          return {
+            x: (R + r * Math.cos(v)) * Math.cos(u),
+            y: (R + r * Math.cos(v)) * Math.sin(u),
+            z: r * Math.sin(v),
+            r: 0.1,
+            g: 0.6,
+            b: 2.5,
+            s: 1.8,
+          };
+        } else if (i < COUNT * 0.6) {
+          const t = Math.random();
+          const angle = Math.random() * Math.PI * 2;
+          const radius = t * 16;
+          return {
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle),
+            z: (Math.random() - 0.5) * 4,
+            r: 0.05,
+            g: 0.3 * t,
+            b: 1.2 * t,
+            s: 1.0 * t,
+          };
+        } else if (i < COUNT * 0.75) {
+          const r = 20 + Math.random() * 15;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.02,
+            g: 0.15,
+            b: 0.5,
+            s: 0.5,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      function getRock(i) {
+        if (i < COUNT * 0.25) {
+          const t = (i % (COUNT * 0.25)) / (COUNT * 0.25);
+          const baseX = -22 + t * 44;
+          const jag = (Math.random() - 0.5) * 12 * Math.sin(t * Math.PI);
+          const jagY = (Math.random() - 0.5) * 10 * Math.sin(t * Math.PI);
+          return {
+            x: baseX + jag,
+            y: jagY,
+            z: (Math.random() - 0.5) * 4,
+            r: 0.6,
+            g: 0.9,
+            b: 3.0,
+            s: 2.8,
+          };
+        } else if (i < COUNT * 0.4) {
+          const startX = (Math.random() - 0.5) * 30;
+          const branchAngle = Math.random() * Math.PI * 2;
+          const branchLen = Math.random() * 15;
+          return {
+            x: startX + Math.cos(branchAngle) * branchLen,
+            y: Math.sin(branchAngle) * branchLen,
+            z: (Math.random() - 0.5) * 6,
+            r: 0.3,
+            g: 0.5,
+            b: 2.0,
+            s: 1.8,
+          };
+        } else if (i < COUNT * 0.55) {
+          const r = Math.random() * 35;
+          const angle = Math.random() * Math.PI * 2;
+          return {
+            x: r * Math.cos(angle),
+            y: (Math.random() - 0.5) * 25,
+            z: (Math.random() - 0.5) * 15,
+            r: 0.1,
+            g: 0.2,
+            b: 0.8,
+            s: 0.6,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      function getGun(i) {
+        if (i < COUNT * 0.06) {
+          const r = Math.random() * 5;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3.0,
+            g: 1.0,
+            b: 0.2,
+            s: 3.0,
+          };
+        } else if (i < COUNT * 0.55) {
+          const t = Math.random();
+          const spread = t * 4;
+          return {
+            x: -3 + t * 85,
+            y: (Math.random() - 0.5) * spread,
+            z: (Math.random() - 0.5) * spread,
+            r: 2.5 * (1 - t * 0.7),
+            g: 0.3 * (1 - t),
+            b: 0.05,
+            s: 2.2 * (1 - t * 0.6),
+          };
+        } else if (i < COUNT * 0.7) {
+          const t = Math.random();
+          return {
+            x: -5 + t * 60,
+            y: (Math.random() - 0.5) * (8 * t),
+            z: (Math.random() - 0.5) * (8 * t),
+            r: 0.6,
+            g: 0.0,
+            b: 0.0,
+            s: 0.6 * (1 - t * 0.5),
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      function getShaka(i) {
+        if (i < COUNT * 0.08) {
+          const r = Math.random() * 4;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 2.5,
+            g: 1.5,
+            b: 0.3,
+            s: 2.5,
+          };
+        } else if (i < COUNT * 0.7) {
+          const ringCount = 7;
+          const ringIndex = Math.floor(Math.random() * ringCount);
+          const radius = 5 + ringIndex * 7;
+          const angle = Math.random() * Math.PI * 2;
+          const wobble = Math.sin(angle * 4 + ringIndex) * 1.5;
+          return {
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle) + wobble,
+            z: (Math.random() - 0.5) * (1.5 + ringIndex * 0.5),
+            r: 2.0 - ringIndex * 0.2,
+            g: 1.0 - ringIndex * 0.1,
+            b: 0.15,
+            s: 1.8 - ringIndex * 0.12,
+          };
+        } else {
+          const r = 50 + Math.random() * 20;
+          const angle = Math.random() * 6.28;
+          return {
+            x: r * Math.cos(angle),
+            y: r * Math.sin(angle),
+            z: (Math.random() - 0.5) * 3,
+            r: 0.3,
+            g: 0.15,
+            b: 0.02,
+            s: 0.3,
+          };
+        }
+      }
+
+      function getThree(i) {
+        if (i < COUNT * 0.8) {
+          const stream = i % 3;
+          const t = i / COUNT;
+          const baseAngle = (stream * Math.PI * 2) / 3 - Math.PI / 2;
+          const radius = 2 + t * 42;
+          const spiralAngle = baseAngle + t * 5;
+          const streamColors = [
+            { r: 2.5, g: 0.1, b: 0.1 },
+            { r: 0.1, g: 2.5, b: 0.1 },
+            { r: 0.1, g: 0.1, b: 2.5 },
+          ];
+          const c = streamColors[stream];
+          const fade = 1 - t * 0.4;
+          return {
+            x:
+              radius * Math.cos(spiralAngle) +
+              (Math.random() - 0.5) * (2 + t * 4),
+            y:
+              radius * Math.sin(spiralAngle) +
+              (Math.random() - 0.5) * (2 + t * 4),
+            z: (Math.random() - 0.5) * (3 + t * 8),
+            r: c.r * fade,
+            g: c.g * fade,
+            b: c.b * fade,
+            s: 1.6 * (1 - t * 0.3),
+          };
+        } else {
+          const r = Math.random() * 3;
+          const theta = Math.random() * 6.28;
+          return {
+            x: r * Math.cos(theta),
+            y: r * Math.sin(theta),
+            z: (Math.random() - 0.5) * 2,
+            r: 1.5,
+            g: 1.5,
+            b: 1.5,
+            s: 2.0,
+          };
+        }
+      }
+
+      function getSpiderman(i) {
+        if (i < COUNT * 0.05) {
+          const r = Math.random() * 3;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 2.0,
+            g: 0.4,
+            b: 2.5,
+            s: 2.8,
+          };
+        } else if (i < COUNT * 0.55) {
+          const strandCount = 14;
+          const strand = i % strandCount;
+          const strandAngle = (strand / strandCount) * Math.PI * 2;
+          const t = Math.random();
+          const dist = t * 42;
+          const sag = Math.sin(t * Math.PI) * 6;
+          return {
+            x: dist * Math.cos(strandAngle) + (Math.random() - 0.5) * 1.5,
+            y: dist * Math.sin(strandAngle) - sag + (Math.random() - 0.5) * 1.5,
+            z: (Math.random() - 0.5) * 2.5,
+            r: 1.5 * (1 - t * 0.5),
+            g: 0.2,
+            b: 2.0 * (1 - t * 0.3),
+            s: 1.3 * (1 - t * 0.4),
+          };
+        } else if (i < COUNT * 0.72) {
+          const ringCount = 5;
+          const ringIndex = Math.floor(Math.random() * ringCount);
+          const radius = 8 + ringIndex * 8;
+          const angle = Math.random() * Math.PI * 2;
+          return {
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle),
+            z: (Math.random() - 0.5) * 2,
+            r: 0.8 - ringIndex * 0.1,
+            g: 0.15,
+            b: 1.2 - ringIndex * 0.15,
+            s: 0.9,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      function getSnap(i) {
+        if (i < COUNT * 0.08) {
+          const r = Math.random() * 6;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3.0,
+            g: 3.0,
+            b: 3.0,
+            s: 3.5,
+          };
+        } else if (i < COUNT * 0.55) {
+          const r = 8 + Math.random() * 50;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          const fade = Math.random();
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 1.8 * fade,
+            g: 1.2 * fade,
+            b: 0.4 * fade,
+            s: 1.8 * fade,
+          };
+        } else if (i < COUNT * 0.7) {
+          const r = 15 + Math.random() * 40;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta) - Math.random() * 10,
+            z: r * Math.cos(phi),
+            r: 0.3,
+            g: 0.15,
+            b: 0.05,
+            s: 0.5,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      // ==========================================
+      //  TWO-HAND Combo Technique Particle Functions
+      // ==========================================
+
+      // Both Open Palms → Domain Expansion: Unlimited — massive multi-layered sphere
+      function getDomain(i) {
+        if (i < COUNT * 0.08) {
+          // Blazing white-violet inner core
+          const r = Math.random() * 7;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3.0,
+            g: 2.0,
+            b: 3.0,
+            s: 3.5,
+          };
+        } else if (i < COUNT * 0.25) {
+          // Inner energy shell
+          const r = 16 + Math.random() * 3;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 1.5,
+            g: 0.5,
+            b: 2.5,
+            s: 2.2,
+          };
+        } else if (i < COUNT * 0.5) {
+          // Outer domain barrier shell
+          const r = 32 + Math.random() * 3;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.6,
+            g: 0.2,
+            b: 1.2,
+            s: 1.5,
+          };
+        } else if (i < COUNT * 0.7) {
+          // Floating cursed energy fragments between shells
+          const r = 18 + Math.random() * 14;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.3,
+            g: 0.1,
+            b: 0.6,
+            s: 0.8,
+          };
+        } else if (i < COUNT * 0.9) {
+          // Cosmic background beyond the domain
+          const r = 40 + Math.random() * 80;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.08,
+            g: 0.03,
+            b: 0.2,
+            s: 0.4,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      // Both Fists → Black Flash: Double Impact — twin orbiting gravity wells
+      function getDoubleBlackFlash(i) {
+        const half = Math.floor(COUNT / 2);
+        const side = i < half ? -1 : 1;
+        const cx = side * 14;
+        const li = i % half;
+
+        if (li < half * 0.1) {
+          // Dense core per well
+          const r = Math.random() * 3;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: cx + r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 1.5,
+            g: 0.0,
+            b: 2.5,
+            s: 3.0,
+          };
+        } else if (li < half * 0.35) {
+          // Spiral arms per well
+          const t = li / half;
+          const angle = t * 22 + side * 0.5;
+          const radius = Math.max(18 * (1 - t * 1.8), 2);
+          return {
+            x: cx + radius * Math.cos(angle),
+            y: radius * Math.sin(angle),
+            z: (Math.random() - 0.5) * (5 * (1 - t)),
+            r: 0.2,
+            g: 0.0,
+            b: 0.6,
+            s: 1.5 * (1 - t * 0.4),
+          };
+        } else if (li < half * 0.55) {
+          // Energy arc connecting the two wells
+          const t = Math.random();
+          const arcY = Math.sin(t * Math.PI) * 10 + (Math.random() - 0.5) * 3;
+          return {
+            x: -14 + t * 28,
+            y: arcY,
+            z: (Math.random() - 0.5) * 4,
+            r: 0.8,
+            g: 0.3,
+            b: 1.8,
+            s: 1.8,
+          };
+        } else if (li < half * 0.7) {
+          // Outer distortion
+          const r = 20 + Math.random() * 25;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.03,
+            g: 0.0,
+            b: 0.08,
+            s: 0.4,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      // Both Pointing → Cleave & Dismantle — dual crossing slash lines
+      function getCleave(i) {
+        if (i < COUNT * 0.25) {
+          // Slash 1: top-left to bottom-right
+          const t = Math.random();
+          const width = (Math.random() - 0.5) * 3;
+          return {
+            x: -35 + t * 70,
+            y: 30 - t * 60 + width,
+            z: (Math.random() - 0.5) * 3,
+            r: 2.5,
+            g: 0.15,
+            b: 0.15,
+            s: 2.2,
+          };
+        } else if (i < COUNT * 0.5) {
+          // Slash 2: top-right to bottom-left
+          const t = Math.random();
+          const width = (Math.random() - 0.5) * 3;
+          return {
+            x: 35 - t * 70,
+            y: 30 - t * 60 + width,
+            z: (Math.random() - 0.5) * 3,
+            r: 2.5,
+            g: 0.15,
+            b: 0.15,
+            s: 2.2,
+          };
+        } else if (i < COUNT * 0.6) {
+          // Intersection burst at center
+          const r = Math.random() * 8;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3.0,
+            g: 1.0,
+            b: 0.5,
+            s: 2.8,
+          };
+        } else if (i < COUNT * 0.75) {
+          // Flying debris fragments
+          const r = 5 + Math.random() * 45;
+          const theta = Math.random() * 6.28;
+          return {
+            x: r * Math.cos(theta),
+            y: r * Math.sin(theta) + (Math.random() - 0.5) * 20,
+            z: (Math.random() - 0.5) * 25,
+            r: 0.4,
+            g: 0.05,
+            b: 0.05,
+            s: 0.6,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      // Hands Close Together → Binding Vow — concentrated golden energy with chain links
+      function getBinding(i) {
+        if (i < COUNT * 0.12) {
+          // Intense golden core
+          const r = Math.random() * 5;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 3.0,
+            g: 2.2,
+            b: 0.5,
+            s: 3.2,
+          };
+        } else if (i < COUNT * 0.45) {
+          // Chain links radiating outward in lines
+          const chainCount = 8;
+          const chain = i % chainCount;
+          const chainAngle = (chain / chainCount) * Math.PI * 2;
+          const t = Math.random();
+          const dist = 4 + t * 25;
+          const linkWobble = Math.sin(t * 18) * 2;
+          return {
+            x:
+              dist * Math.cos(chainAngle) +
+              Math.cos(chainAngle + Math.PI / 2) * linkWobble,
+            y:
+              dist * Math.sin(chainAngle) +
+              Math.sin(chainAngle + Math.PI / 2) * linkWobble,
+            z: (Math.random() - 0.5) * 3,
+            r: 2.5 * (1 - t * 0.4),
+            g: 1.8 * (1 - t * 0.4),
+            b: 0.3,
+            s: 1.8 * (1 - t * 0.3),
+          };
+        } else if (i < COUNT * 0.65) {
+          // Pulsing aura
+          const r = 8 + Math.random() * 20;
+          const theta = Math.random() * 6.28;
+          const phi = Math.acos(2 * Math.random() - 1);
+          return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi),
+            r: 0.8,
+            g: 0.6,
+            b: 0.1,
+            s: 0.8,
+          };
+        } else return { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+      }
+
+      // One Palm + One Fist → Convergent Divergence — blue push / red pull duality
+      function getConvergence(i) {
+        if (i < COUNT * 0.45) {
+          // Push side (expanding blue, left hemisphere)
+          const t = Math.random();
+          const angle = Math.random() * Math.PI - Math.PI / 2;
+          const r = 4 + t * 38;
+          return {
+            x: -(r * Math.cos(angle)),
+            y: r * Math.sin(angle),
+            z: (Math.random() - 0.5) * (10 * t),
+            r: 0.05,
+            g: 0.3 * (1 - t * 0.3),
+            b: 2.2 * (1 - t * 0.4),
+            s: 1.6 * (1 - t * 0.3),
+          };
+        } else if (i < COUNT * 0.9) {
+          // Pull side (contracting red, right hemisphere)
+          const t = Math.random();
+          const angle = Math.random() * Math.PI - Math.PI / 2;
+          const r = 4 + (1 - t * 0.6) * 35;
+          return {
+            x: r * Math.cos(angle),
+            y: r * Math.sin(angle),
+            z: (Math.random() - 0.5) * (8 * (1 - t)),
+            r: 2.2 * (1 - t * 0.4),
+            g: 0.05,
+            b: 0.05,
+            s: 1.6 * (1 - t * 0.3),
+          };
+        } else {
+          // Center clash point
+          const r = Math.random() * 4;
+          const theta = Math.random() * 6.28;
+          return {
+            x: r * Math.cos(theta),
+            y: r * Math.sin(theta),
+            z: (Math.random() - 0.5) * 3,
+            r: 2.0,
+            g: 1.0,
+            b: 2.0,
+            s: 2.5,
+          };
+        }
+      }
+
+      // ==========================================
+      //  Hand Tracking State & Detection
+      // ==========================================
+
+      let currentTech = "neutral";
+      let shakeIntensity = 0;
+      const videoElement = document.querySelector(".input_video");
+      const canvasElement = document.getElementById("output_canvas");
+      const canvasCtx = canvasElement.getContext("2d");
+      let glowColor = "#00ffff";
+
+      // ==========================================
+      //  Per-Hand State Tracking (with frame history for velocity)
+      // ==========================================
+
+      const FRICTION = 0.94;
+      const TORQUE_SCALE = 0.08;
+      const MOMENTUM_CLAMP = 0.08;
+      const GAP_MULTIPLIER = 3.0;
+      const GAP_MIN = 0.3;
+      const GAP_MAX = 3.0;
+      const SCALE_LERP = 0.08;
+      const AUTO_SPIN_RATE = 0.0003;
+      const VELOCITY_SMOOTHING = 0.35;
+      const DEAD_ZONE = 0.002;
+
+      // Depth: hand size range (wrist-to-middle-MCP distance in normalized coords)
+      const DEPTH_CLOSE = 0.35;
+      const DEPTH_FAR = 0.12;
+      const DEPTH_CAM_NEAR = 35;
+      const DEPTH_CAM_FAR = 75;
+      const DEPTH_BLOOM_BOOST = 1.5;
+
+      function makeHand() {
+        return {
+          px: 0.5,
+          py: 0.5,
+          angle: 0,
+          prevPx: 0.5,
+          prevPy: 0.5,
+          prevAngle: 0,
+          dpx: 0,
+          dpy: 0,
+          dAngle: 0,
+          smoothDpx: 0,
+          smoothDpy: 0,
+          smoothDAngle: 0,
+          fingers: [false, false, false, false, false],
+          fingerCount: 0,
+          visible: false,
+          lostFrames: 999,
+          gesture: "neutral",
+          handSize: 0.2,
+          depth: 0.5,
+        };
+      }
+
+      const leftHand = makeHand();
+      const rightHand = makeHand();
+
+      const twoHandMetrics = {
+        gap: 0,
+        prevGap: 0,
+        gapDelta: 0,
+        angle: 0,
+        heightDiff: 0,
+        relVelocityX: 0,
+        relVelocityY: 0,
+        bothVisible: false,
+      };
+
+      const rotationState = { momentumX: 0, momentumY: 0, momentumZ: 0 };
+      let gapFactor = 1.0;
+      let handCount = 0;
+
+      const hands = new Hands({
+        locateFile: (file) =>
+          `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+      });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+      });
+
+      // Detect gesture for a single hand (returns technique name)
+      function detectSingleHand(lm) {
+        const isUp = (t, p) => lm[t].y < lm[p].y;
+        const pinchDist = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+        const snapDist = Math.hypot(lm[12].x - lm[4].x, lm[12].y - lm[4].y);
+        const thumbExt =
+          Math.hypot(lm[4].x - lm[2].x, lm[4].y - lm[2].y) > 0.07;
+
+        const idx = isUp(8, 6),
+          mid = isUp(12, 10),
+          rng = isUp(16, 14),
+          pnk = isUp(20, 18);
+
+        // Distance-based gestures first
+        if (snapDist < 0.05 && idx && !rng && !pnk) return "snap";
+        if (pinchDist < 0.06 && mid && rng && pnk) return "ok";
+        if (pinchDist < 0.04) return "purple";
+
+        // All 4 fingers up
+        if (idx && mid && rng && pnk && thumbExt) return "openpalm";
+        if (idx && mid && rng && pnk) return "shrine";
+
+        // 3 fingers up
+        if (idx && mid && rng && !pnk) return "three";
+
+        // 2 fingers up
+        if (idx && mid && !rng) return "void";
+
+        // Index + pinky combos
+        if (idx && !mid && !rng && pnk && thumbExt) return "spiderman";
+        if (idx && !mid && !rng && pnk) return "rock";
+
+        // Single finger / thumb combos
+        if (!idx && !mid && !rng && pnk && thumbExt) return "shaka";
+        if (idx && !mid && !rng && !pnk && thumbExt) return "gun";
+        if (idx && !mid) return "red";
+
+        // No fingers up
+        if (!idx && !mid && !rng && !pnk) return "fist";
+
+        return "neutral";
+      }
+
+      // Detect two-hand combo (returns combo name or null to fall back to single-hand)
+      function detectTwoHandCombo(g1, g2, h1, h2) {
+        const dist = Math.hypot(h2.px - h1.px, h2.py - h1.py);
+
+        // Both open palms → Domain Expansion
+        if (g1 === "openpalm" && g2 === "openpalm") return "domain";
+
+        // Both fists → Double Black Flash
+        if (g1 === "fist" && g2 === "fist") return "dbl_blackflash";
+
+        // Both pointing (index up) → Cleave & Dismantle
+        if (g1 === "red" && g2 === "red") return "cleave";
+        if (g1 === "gun" && g2 === "gun") return "cleave";
+
+        // One palm + one fist (either hand) → Convergent Divergence
+        if (
+          (g1 === "openpalm" && g2 === "fist") ||
+          (g1 === "fist" && g2 === "openpalm")
+        )
+          return "convergence";
+
+        // Hands very close together (any gesture) → Binding Vow
+        if (dist < 0.12) return "binding";
+
+        return null;
+      }
+
+      hands.onResults((results) => {
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+        // Reset visibility flags
+        leftHand.visible = false;
+        rightHand.visible = false;
+
+        if (results.multiHandLandmarks && results.multiHandedness) {
+          results.multiHandLandmarks.forEach((lm, idx) => {
+            drawConnectors(canvasCtx, lm, HAND_CONNECTIONS, {
+              color: glowColor,
+              lineWidth: 5,
+            });
+            drawLandmarks(canvasCtx, lm, {
+              color: "#fff",
+              lineWidth: 1,
+              radius: 2,
+            });
+
+            // Identify left/right via multiHandedness (label is from user's perspective)
+            const label = results.multiHandedness[idx].label;
+            const hand = label === "Left" ? leftHand : rightHand;
+
+            // Save previous frame for delta computation
+            hand.prevPx = hand.px;
+            hand.prevPy = hand.py;
+            hand.prevAngle = hand.angle;
+
+            // Compute new palm center (wrist + 4 finger MCPs)
+            hand.px = (lm[0].x + lm[5].x + lm[9].x + lm[13].x + lm[17].x) / 5;
+            hand.py = (lm[0].y + lm[5].y + lm[9].y + lm[13].y + lm[17].y) / 5;
+            hand.angle = Math.atan2(lm[9].y - lm[0].y, lm[9].x - lm[0].x);
+
+            // First-frame guard: if hand was lost for several frames, zero out delta
+            if (hand.lostFrames > 3) {
+              hand.prevPx = hand.px;
+              hand.prevPy = hand.py;
+              hand.prevAngle = hand.angle;
+            }
+
+            // Compute raw velocity (delta per frame)
+            const rawDpx = hand.px - hand.prevPx;
+            const rawDpy = hand.py - hand.prevPy;
+            const rawDAngle = hand.angle - hand.prevAngle;
+
+            // Exponential moving average smoothing (kills jitter/wobble)
+            hand.smoothDpx =
+              hand.smoothDpx * (1 - VELOCITY_SMOOTHING) +
+              rawDpx * VELOCITY_SMOOTHING;
+            hand.smoothDpy =
+              hand.smoothDpy * (1 - VELOCITY_SMOOTHING) +
+              rawDpy * VELOCITY_SMOOTHING;
+            hand.smoothDAngle =
+              hand.smoothDAngle * (1 - VELOCITY_SMOOTHING) +
+              rawDAngle * VELOCITY_SMOOTHING;
+
+            // Dead zone: ignore tiny jittery movements
+            hand.dpx =
+              Math.abs(hand.smoothDpx) > DEAD_ZONE ? hand.smoothDpx : 0;
+            hand.dpy =
+              Math.abs(hand.smoothDpy) > DEAD_ZONE ? hand.smoothDpy : 0;
+            hand.dAngle =
+              Math.abs(hand.smoothDAngle) > DEAD_ZONE * 2
+                ? hand.smoothDAngle
+                : 0;
+
+            // Finger states: [thumb, index, middle, ring, pinky]
+            const isUp = (t, p) => lm[t].y < lm[p].y;
+            const thumbExt =
+              Math.hypot(lm[4].x - lm[2].x, lm[4].y - lm[2].y) > 0.07;
+            hand.fingers = [
+              thumbExt,
+              isUp(8, 6),
+              isUp(12, 10),
+              isUp(16, 14),
+              isUp(20, 18),
+            ];
+            hand.fingerCount = hand.fingers.filter(Boolean).length;
+
+            // Depth: hand apparent size as proxy for camera distance
+            // Larger handSize = closer to camera, smaller = farther
+            hand.handSize = Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y);
+            hand.depth = THREE.MathUtils.clamp(
+              (hand.handSize - DEPTH_FAR) / (DEPTH_CLOSE - DEPTH_FAR),
+              0,
+              1,
+            ); // 0 = far, 1 = close
+
+            hand.visible = true;
+            hand.lostFrames = 0;
+            hand.gesture = detectSingleHand(lm);
+          });
+        }
+
+        // Decay velocity for hands that disappeared
+        if (!leftHand.visible) {
+          leftHand.lostFrames++;
+          leftHand.dpx *= 0.8;
+          leftHand.dpy *= 0.8;
+          leftHand.dAngle *= 0.8;
+        }
+        if (!rightHand.visible) {
+          rightHand.lostFrames++;
+          rightHand.dpx *= 0.8;
+          rightHand.dpy *= 0.8;
+          rightHand.dAngle *= 0.8;
+        }
+
+        // Count visible hands
+        handCount = (leftHand.visible ? 1 : 0) + (rightHand.visible ? 1 : 0);
+
+        // Compute two-hand relative metrics
+        if (leftHand.visible && rightHand.visible) {
+          twoHandMetrics.prevGap = twoHandMetrics.gap;
+          twoHandMetrics.gap = Math.hypot(
+            rightHand.px - leftHand.px,
+            rightHand.py - leftHand.py,
+          );
+          twoHandMetrics.gapDelta = twoHandMetrics.gap - twoHandMetrics.prevGap;
+          twoHandMetrics.angle = Math.atan2(
+            rightHand.py - leftHand.py,
+            rightHand.px - leftHand.px,
+          );
+          twoHandMetrics.heightDiff = rightHand.py - leftHand.py;
+          // Differential velocity: opposite hand movements create spin
+          twoHandMetrics.relVelocityX = leftHand.dpx - rightHand.dpx;
+          twoHandMetrics.relVelocityY = leftHand.dpy - rightHand.dpy;
+          twoHandMetrics.bothVisible = true;
+
+          // Map gap to scale factor
+          gapFactor = THREE.MathUtils.clamp(
+            twoHandMetrics.gap * GAP_MULTIPLIER,
+            GAP_MIN,
+            GAP_MAX,
+          );
+        } else {
+          twoHandMetrics.bothVisible = false;
+        }
+
+        // Determine final technique
+        let detected = "neutral";
+
+        if (handCount === 2) {
+          const combo = detectTwoHandCombo(
+            leftHand.gesture,
+            rightHand.gesture,
+            leftHand,
+            rightHand,
+          );
+          if (combo) {
+            detected = combo;
+          } else {
+            detected =
+              leftHand.gesture !== "neutral"
+                ? leftHand.gesture
+                : rightHand.gesture;
+          }
+        } else if (leftHand.visible) {
+          detected = leftHand.gesture;
+        } else if (rightHand.visible) {
+          detected = rightHand.gesture;
+        }
+
+        updateState(detected);
+      });
+
+      // ==========================================
+      //  State Update
+      // ==========================================
+
+      // Technique config: { glowColor, displayName, bloom, shake }
+      const TECH_CONFIG = {
+        // Original 4
+        shrine: {
+          glow: "#ff0000",
+          name: "Domain Expansion: Malevolent Shrine",
+          bloom: 2.5,
+          shake: 0.4,
+        },
+        purple: {
+          glow: "#bb00ff",
+          name: "Secret Technique: Hollow Purple",
+          bloom: 4.0,
+          shake: 0.4,
+        },
+        void: {
+          glow: "#00ffff",
+          name: "Domain Expansion: Infinite Void",
+          bloom: 2.0,
+          shake: 0.4,
+        },
+        red: {
+          glow: "#ff3333",
+          name: "Reverse Cursed Technique: Red",
+          bloom: 2.5,
+          shake: 0.4,
+        },
+        // New single-hand
+        fist: { glow: "#1a0033", name: "Black Flash", bloom: 3.5, shake: 0.4 },
+        openpalm: {
+          glow: "#ffcc00",
+          name: "Domain Amplification",
+          bloom: 3.0,
+          shake: 0.4,
+        },
+        ok: {
+          glow: "#0088ff",
+          name: "Cursed Technique Lapse: Blue",
+          bloom: 2.5,
+          shake: 0.4,
+        },
+        rock: {
+          glow: "#00ccff",
+          name: "Cursed Speech: Thunder",
+          bloom: 3.5,
+          shake: 0.4,
+        },
+        gun: {
+          glow: "#ff6600",
+          name: "Piercing Blood",
+          bloom: 3.0,
+          shake: 0.4,
+        },
+        shaka: {
+          glow: "#ff9900",
+          name: "Resonance: Cursed Wave",
+          bloom: 2.5,
+          shake: 0.3,
+        },
+        three: {
+          glow: "#ffffff",
+          name: "Cursed Technique: Tri-Formation",
+          bloom: 2.5,
+          shake: 0.4,
+        },
+        spiderman: {
+          glow: "#cc00ff",
+          name: "Cursed Spirit Manipulation: Binding",
+          bloom: 3.0,
+          shake: 0.4,
+        },
+        snap: {
+          glow: "#ffffff",
+          name: "Idle Transfiguration",
+          bloom: 4.0,
+          shake: 0.5,
+        },
+        // Two-hand combos
+        domain: {
+          glow: "#dd00ff",
+          name: "Domain Expansion: Unlimited",
+          bloom: 4.5,
+          shake: 0.6,
+        },
+        dbl_blackflash: {
+          glow: "#2200aa",
+          name: "Black Flash: Double Impact",
+          bloom: 4.0,
+          shake: 0.5,
+        },
+        cleave: {
+          glow: "#ff2222",
+          name: "Cleave & Dismantle",
+          bloom: 3.5,
+          shake: 0.5,
+        },
+        binding: {
+          glow: "#ffaa00",
+          name: "Binding Vow",
+          bloom: 3.0,
+          shake: 0.3,
+        },
+        convergence: {
+          glow: "#8800ff",
+          name: "Convergent Divergence",
+          bloom: 3.5,
+          shake: 0.4,
+        },
+        // Default
+        neutral: {
+          glow: "#00ffff",
+          name: "Neutral State",
+          bloom: 1.0,
+          shake: 0.0,
+        },
+      };
+
+      // Technique → particle generator mapping
+      const TECH_GENERATORS = {
+        red: getRed,
+        void: getVoid,
+        purple: getPurple,
+        shrine: getShrine,
+        fist: getFist,
+        openpalm: getOpenPalm,
+        ok: getOk,
+        rock: getRock,
+        gun: getGun,
+        shaka: getShaka,
+        three: getThree,
+        spiderman: getSpiderman,
+        snap: getSnap,
+        domain: getDomain,
+        dbl_blackflash: getDoubleBlackFlash,
+        cleave: getCleave,
+        binding: getBinding,
+        convergence: getConvergence,
+      };
+
+      function updateState(tech) {
+        if (currentTech === tech) return;
+        currentTech = tech;
+        const nameEl = document.getElementById("technique-name");
+
+        const cfg = TECH_CONFIG[tech] || TECH_CONFIG.neutral;
+        glowColor = cfg.glow;
+        nameEl.innerText = cfg.name;
+        bloomPass.strength = cfg.bloom;
+        shakeIntensity = cfg.shake;
+
+        const generator = TECH_GENERATORS[tech];
+
+        for (let i = 0; i < COUNT; i++) {
+          let p;
+          if (generator) {
+            p = generator(i);
+          } else {
+            // Neutral: faint ambient particles
+            if (i < COUNT * 0.05) {
+              const r = 15 + Math.random() * 20;
+              const t = Math.random() * 6.28;
+              const ph = Math.random() * 3.14;
+              p = {
+                x: r * Math.sin(ph) * Math.cos(t),
+                y: r * Math.sin(ph) * Math.sin(t),
+                z: r * Math.cos(ph),
+                r: 0.1,
+                g: 0.1,
+                b: 0.2,
+                s: 0.4,
+              };
+            } else {
+              p = { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, s: 0 };
+            }
+          }
+          targetPositions[i * 3] = p.x;
+          targetPositions[i * 3 + 1] = p.y;
+          targetPositions[i * 3 + 2] = p.z;
+          targetColors[i * 3] = p.r;
+          targetColors[i * 3 + 1] = p.g;
+          targetColors[i * 3 + 2] = p.b;
+          targetSizes[i] = p.s;
+        }
+      }
+
+      // ==========================================
+      //  Camera
+      // ==========================================
+
+      const cameraUtils = new Camera(videoElement, {
+        onFrame: async () => {
+          canvasElement.width = videoElement.videoWidth;
+          canvasElement.height = videoElement.videoHeight;
+          await hands.send({ image: videoElement });
+        },
+        width: 640,
+        height: 480,
+      });
+      cameraUtils.start();
+
+      // ==========================================
+      //  Animation Loop — Hand-Driven Rotation
+      // ==========================================
+
+      function animate() {
+        requestAnimationFrame(animate);
+
+        // Screen shake
+        if (shakeIntensity > 0) {
+          renderer.domElement.style.transform = `translate(${(Math.random() - 0.5) * shakeIntensity * 40}px, ${(Math.random() - 0.5) * shakeIntensity * 40}px)`;
+        } else {
+          renderer.domElement.style.transform = "translate(0,0)";
+        }
+
+        // Lerp particle positions, colors, sizes
+        const pos = particles.geometry.attributes.position.array;
+        const col = particles.geometry.attributes.color.array;
+        const siz = particles.geometry.attributes.size.array;
+
+        for (let i = 0; i < COUNT * 3; i++) {
+          pos[i] += (targetPositions[i] - pos[i]) * 0.1;
+          col[i] += (targetColors[i] - col[i]) * 0.1;
+        }
+        for (let i = 0; i < COUNT; i++)
+          siz[i] += (targetSizes[i] - siz[i]) * 0.1;
+
+        particles.geometry.attributes.position.needsUpdate = true;
+        particles.geometry.attributes.color.needsUpdate = true;
+        particles.geometry.attributes.size.needsUpdate = true;
+
+        // ---- MOMENTUM-BASED ROTATION (Relative Hand Control) ----
+
+        // Finger intensity: total fingers across both hands modulates responsiveness
+        // 0 fingers (fists) = heavy/sluggish, 10 fingers (all spread) = light/responsive
+        let intensity = 1.0;
+        if (handCount > 0) {
+          const totalFingers =
+            (leftHand.visible ? leftHand.fingerCount : 0) +
+            (rightHand.visible ? rightHand.fingerCount : 0);
+          intensity = 0.3 + (totalFingers / 10) * 0.7;
+        }
+
+        if (currentTech === "neutral" || handCount === 0) {
+          // Neutral: gentle auto-spin, decaying any existing momentum
+          rotationState.momentumY += AUTO_SPIN_RATE;
+        } else if (handCount === 2) {
+          // TWO HANDS: relative metrics drive rotation
+
+          // Z rotation: tracks angle between hands (absolute — tilt hands to tilt effect)
+          const targetZ = -twoHandMetrics.angle * 0.8;
+          rotationState.momentumZ +=
+            (targetZ - particles.rotation.z) * 0.02 * intensity;
+
+          // X rotation: tracks height difference (one hand high, one low = pitch)
+          const targetX = twoHandMetrics.heightDiff * Math.PI * 0.8;
+          rotationState.momentumX +=
+            (targetX - particles.rotation.x) * 0.02 * intensity;
+
+          // Y rotation: DIFFERENTIAL velocity (the key mechanic)
+          // Left moves left + right moves right = spin. Both same direction = no spin.
+          rotationState.momentumY +=
+            twoHandMetrics.relVelocityX * TORQUE_SCALE * 2.0 * intensity;
+        } else {
+          // ONE HAND: velocity-based rotation with inertia (swipe to spin like a globe)
+          const hand = leftHand.visible ? leftHand : rightHand;
+
+          // Horizontal velocity → Y spin (inverted for mirrored camera)
+          rotationState.momentumY += -hand.dpx * TORQUE_SCALE * intensity;
+          // Vertical velocity → X spin
+          rotationState.momentumX += hand.dpy * TORQUE_SCALE * intensity;
+          // Wrist tilt velocity → Z spin (reduced sensitivity)
+          rotationState.momentumZ +=
+            hand.dAngle * TORQUE_SCALE * 0.5 * intensity;
+        }
+
+        // Apply friction (momentum decays each frame)
+        rotationState.momentumX *= FRICTION;
+        rotationState.momentumY *= FRICTION;
+        rotationState.momentumZ *= FRICTION;
+
+        // Clamp to prevent runaway spin
+        rotationState.momentumX = THREE.MathUtils.clamp(
+          rotationState.momentumX,
+          -MOMENTUM_CLAMP,
+          MOMENTUM_CLAMP,
+        );
+        rotationState.momentumY = THREE.MathUtils.clamp(
+          rotationState.momentumY,
+          -MOMENTUM_CLAMP,
+          MOMENTUM_CLAMP,
+        );
+        rotationState.momentumZ = THREE.MathUtils.clamp(
+          rotationState.momentumZ,
+          -MOMENTUM_CLAMP,
+          MOMENTUM_CLAMP,
+        );
+
+        // Apply momentum to particle rotation
+        particles.rotation.x += rotationState.momentumX;
+        particles.rotation.y += rotationState.momentumY;
+        particles.rotation.z += rotationState.momentumZ;
+
+        // ---- DYNAMIC GAP SCALING (pull apart = expand, push together = compress) ----
+        const targetScale =
+          twoHandMetrics.bothVisible && currentTech !== "neutral"
+            ? gapFactor
+            : 1.0;
+        const currentScale = particles.scale.x;
+        const newScale =
+          currentScale + (targetScale - currentScale) * SCALE_LERP;
+        particles.scale.setScalar(newScale);
+
+        // ---- DEPTH EFFECT (hand near camera = zoom in + bloom boost) ----
+        if (handCount > 0 && currentTech !== "neutral") {
+          // Average depth across visible hands (0 = far, 1 = close)
+          let avgDepth = 0;
+          let depthCount = 0;
+          if (leftHand.visible) {
+            avgDepth += leftHand.depth;
+            depthCount++;
+          }
+          if (rightHand.visible) {
+            avgDepth += rightHand.depth;
+            depthCount++;
+          }
+          avgDepth /= depthCount;
+
+          // Camera Z: closer hand → camera moves in, farther → camera pulls back
+          const targetCamZ =
+            DEPTH_CAM_FAR - avgDepth * (DEPTH_CAM_FAR - DEPTH_CAM_NEAR);
+          camera.position.z += (targetCamZ - camera.position.z) * 0.06;
+
+          // Bloom boost: closer hand → more intense glow
+          const cfg = TECH_CONFIG[currentTech] || TECH_CONFIG.neutral;
+          const depthBloom = cfg.bloom + avgDepth * DEPTH_BLOOM_BOOST;
+          bloomPass.strength += (depthBloom - bloomPass.strength) * 0.08;
+        } else {
+          // Return to default camera distance
+          camera.position.z += (55 - camera.position.z) * 0.04;
+        }
+
+        composer.render();
+      }
+      animate();
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        composer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
+  </body>
+</html>
