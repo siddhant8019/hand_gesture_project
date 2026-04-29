@@ -7,6 +7,8 @@ particle/shader effects rendered with [Three.js](https://threejs.org/).
 
 No installs, no build step — just a single HTML file and a webcam.
 
+**▶ [Try it live](https://siddhant8019.github.io/hand_gesture_project/)** &nbsp;·&nbsp; [Solar system viewer](https://siddhant8019.github.io/hand_gesture_project/solar-system.html)
+
 ## Demo
 
 ![Hand Gesture Project demo](demo.gif)
