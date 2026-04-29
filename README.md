@@ -7,6 +7,14 @@ particle/shader effects rendered with [Three.js](https://threejs.org/).
 
 No installs, no build step — just a single HTML file and a webcam.
 
+## Demo
+
+<video src="demo.mov" controls width="720" muted playsinline>
+  Your browser does not support the video tag. <a href="demo.mov">Download the demo video</a>.
+</video>
+
+> If the inline player above doesn't load, [click here to download / open the demo](demo.mov).
+
 ## Features
 
 The main experience (`index.html`) maps four hand poses to four distinct
